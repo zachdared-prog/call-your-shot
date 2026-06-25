@@ -123,11 +123,10 @@ export default function Pick() {
         .from('users')
         .select('id, nickname')
         .eq('nickname', nick)
-        .gte('created_at', today + 'T00:00:00Z')
+        .eq('game_date', today)
         .maybeSingle()
 
       if (existing) {
-        // Nickname taken by someone else
         setError(`Nickname "${nick}" is already taken for today. Choose another.`)
         setSubmitting(false)
         return
@@ -135,7 +134,7 @@ export default function Pick() {
 
       const { data: newUser, error: userErr } = await supabase
         .from('users')
-        .insert({ nickname: nick })
+        .insert({ nickname: nick, game_date: today })
         .select()
         .single()
 

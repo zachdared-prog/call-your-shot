@@ -13,9 +13,10 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   nickname TEXT NOT NULL,
+  game_date DATE NOT NULL DEFAULT CURRENT_DATE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   is_admin BOOLEAN DEFAULT FALSE,
-  UNIQUE (nickname, created_at::DATE)
+  UNIQUE (nickname, game_date)
 );
 
 CREATE TABLE IF NOT EXISTS games (
