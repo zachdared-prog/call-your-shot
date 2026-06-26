@@ -149,17 +149,38 @@ export default function Pick() {
       setExistingNickname(nick)
     }
 
-    // Upsert pick
-    const { error: pickErr } = await supabase
+    // Check if pick already exists
+    const { data: existingPickRow } = await supabase
       .from('picks')
-      .upsert({
-        user_id: uid,
-        game_id: gameId,
-        player_id: selected.player_id,
-        player_name: selected.player_name,
-        submitted_at: new Date().toISOString(),
-        is_visible: false,
-      }, { onConflict: 'user_id,game_id' })
+      .select('id')
+      .eq('user_id', uid)
+      .eq('game_id', gameId)
+      .maybeSingle()
+
+    let pickErr
+    if (existingPickRow) {
+      const { error } = await supabase
+        .from('picks')
+        .update({
+          player_id: selected.player_id,
+          player_name: selected.player_name,
+          submitted_at: new Date().toISOString(),
+        })
+        .eq('id', existingPickRow.id)
+      pickErr = error
+    } else {
+      const { error } = await supabase
+        .from('picks')
+        .insert({
+          user_id: uid,
+          game_id: gameId,
+          player_id: selected.player_id,
+          player_name: selected.player_name,
+          submitted_at: new Date().toISOString(),
+          is_visible: false,
+        })
+      pickErr = error
+    }
 
     if (pickErr) {
       setError('Failed to submit pick: ' + pickErr.message)
