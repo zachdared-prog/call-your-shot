@@ -54,6 +54,7 @@ export default async function handler(req, context) {
     const allPlays = feed?.liveData?.plays?.allPlays || []
     const gameData = feed?.gameData
     const homeId = gameData?.teams?.home?.id
+    const awayId = gameData?.teams?.away?.id
 
     const existingHRs = await supabase
       .from('home_runs')
@@ -71,8 +72,8 @@ export default async function handler(req, context) {
       if (play.result?.eventType !== 'home_run') continue
 
       const battingTeamId = play.about?.halfInning === 'top'
-        ? gameData?.teams?.away?.id
-        : gameData?.teams?.home?.id
+        ? awayId
+        : homeId
 
       if (battingTeamId !== DODGERS_ID) continue
 

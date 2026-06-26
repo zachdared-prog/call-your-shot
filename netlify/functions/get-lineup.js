@@ -18,7 +18,10 @@ export default async function handler(req, context) {
 
     const gameData = data?.gameData
     const homeId = gameData?.teams?.home?.id
-    const dodgersSide = homeId === DODGERS_ID ? 'home' : 'away'
+    const awayId = gameData?.teams?.away?.id
+    const dodgersSide = homeId === DODGERS_ID ? 'home' : awayId === DODGERS_ID ? 'away' : null
+
+    if (!dodgersSide) throw new Error('Dodgers not found in this game')
 
     const teamBox = boxscore.teams?.[dodgersSide]
     const battingOrder = teamBox?.battingOrder || []
