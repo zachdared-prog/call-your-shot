@@ -61,11 +61,16 @@ export default function Admin() {
     setMessage(null)
     try {
       const res = await fetch('/.netlify/functions/get-todays-games')
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'fetch failed')
+      const text = await res.text()
+      let data = {}
+      try { data = JSON.parse(text) } catch (_) {}
+      if (!res.ok) {
+        const detail = data.error || data.errorMessage || data.message || text.slice(0, 200)
+        throw new Error(`HTTP ${res.status}: ${detail}`)
+      }
       setMessage({ type: 'success', text: `Fetched ${data.games?.length ?? 0} game(s) from MLB API.` })
     } catch (e) {
-      setMessage({ type: 'error', text: 'Could not fetch games: ' + e.message })
+      setMessage({ type: 'error', text: 'Function error: ' + e.message })
     }
     await loadGames()
   }
