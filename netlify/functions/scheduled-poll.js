@@ -82,18 +82,21 @@ async function pollGame(game) {
   else if (abstract === 'Final') newStatus = 'final'
   else if (detailed.toLowerCase().includes('postpone')) newStatus = 'postponed'
 
-  // Update status + reveal picks if newly active
   if (newStatus !== game.status) {
-    const updates = { status: newStatus }
-    if (newStatus === 'active') {
-      updates.lineup_locked = true
-      await supabase.from('picks').update({ is_visible: true }).eq('game_id', game.id)
-    }
+    await supabase.from('games').update({ status: newStatus }).eq('id', game.id)
     if (newStatus === 'postponed') {
       await supabase.from('picks').delete().eq('game_id', game.id)
     }
-    await supabase.from('games').update(updates).eq('id', game.id)
     console.log(`Game ${game.game_pk} status: ${game.status} → ${newStatus}`)
+  }
+
+  // Lock lineup and reveal picks whenever game is active but not yet locked.
+  // Checked independently because the initial schedule upsert may have already
+  // set status=active before this comparison runs, making newStatus === game.status.
+  if (newStatus === 'active' && !game.lineup_locked) {
+    await supabase.from('games').update({ lineup_locked: true }).eq('id', game.id)
+    await supabase.from('picks').update({ is_visible: true }).eq('game_id', game.id)
+    console.log(`Game ${game.game_pk}: lineup locked, picks revealed`)
   }
 
   // Only scan for HRs if game is active or just went final

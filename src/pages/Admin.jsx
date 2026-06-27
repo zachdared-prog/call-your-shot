@@ -174,6 +174,9 @@ export default function Admin() {
                 <button className="btn btn--ghost" onClick={() => callOverride('recalculate')}>
                   ↻ Recalculate Scores
                 </button>
+                <button className="btn btn--outline" onClick={() => callOverride('reset_game')}>
+                  ⏪ Reset to Scheduled
+                </button>
               </div>
             </div>
 

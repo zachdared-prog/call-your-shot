@@ -44,7 +44,6 @@ export default async function handler(req, context) {
           status,
           first_pitch_time: game.gameDate || null,
           game_number: gameNumber,
-          lineup_locked: false,
         }
 
         const { data: upserted, error } = await supabase

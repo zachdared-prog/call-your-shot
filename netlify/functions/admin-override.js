@@ -86,6 +86,16 @@ export default async function handler(req, context) {
         return Response.json({ message: 'Scores recalculated.' })
       }
 
+      case 'reset_game': {
+        await supabase
+          .from('games')
+          .update({ status: 'scheduled', lineup_locked: false })
+          .eq('id', game_id)
+        await supabase.from('picks').update({ is_visible: false }).eq('game_id', game_id)
+        const { data: game } = await supabase.from('games').select('*').eq('id', game_id).single()
+        return Response.json({ message: 'Game reset to scheduled. Picks hidden again.', game })
+      }
+
       default:
         return Response.json({ error: `Unknown action: ${action}` }, { status: 400 })
     }
