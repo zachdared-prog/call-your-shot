@@ -15,8 +15,12 @@ export const config = {
   schedule: '*/2 * * * *',
 }
 
+function getPacificDate() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date())
+}
+
 export default async function handler(req, context) {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = getPacificDate()
 
   // First, upsert today's games from MLB API
   try {
