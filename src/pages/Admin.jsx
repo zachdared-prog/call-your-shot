@@ -43,15 +43,31 @@ export default function Admin() {
 
   async function loadGames() {
     setLoading(true)
-    const today = new Date().toISOString().slice(0, 10)
-    const { data } = await supabase
+    // Look back 3 days to catch any UTC/PT date-offset games
+    const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    const { data, error } = await supabase
       .from('games')
       .select('*')
-      .gte('game_date', today)
+      .gte('game_date', since)
       .order('game_date')
       .limit(14)
+    if (error) setMessage({ type: 'error', text: 'DB error loading games: ' + error.message })
     setGames(data || [])
     setLoading(false)
+  }
+
+  async function fetchTodayGames() {
+    setLoading(true)
+    setMessage(null)
+    try {
+      const res = await fetch('/.netlify/functions/get-todays-games')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'fetch failed')
+      setMessage({ type: 'success', text: `Fetched ${data.games?.length ?? 0} game(s) from MLB API.` })
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Could not fetch games: ' + e.message })
+    }
+    await loadGames()
   }
 
   async function selectGame(game) {
@@ -134,7 +150,12 @@ export default function Admin() {
 
       <div className="admin-grid">
         <div className="admin-games-list">
-          <h2 className="section-title">Upcoming / Recent Games</h2>
+          <div className="section-header">
+            <h2 className="section-title">Recent / Upcoming Games</h2>
+            <button className="btn btn--sm btn--ghost" onClick={fetchTodayGames} disabled={loading}>
+              {loading ? 'Loading…' : '↻ Fetch from MLB'}
+            </button>
+          </div>
           {loading ? <div className="spinner" /> : (
             <div className="admin-game-items">
               {games.map(g => (
