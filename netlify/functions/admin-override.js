@@ -44,7 +44,6 @@ export default async function handler(req, context) {
 
       case 'finalize_game': {
         await supabase.from('games').update({ status: 'final' }).eq('id', game_id)
-        // Calculate final scores
         const base = getBaseUrl(req)
         await fetch(`${base}/calculate-scores?gameId=${game_id}`)
         const { data: game } = await supabase.from('games').select('*').eq('id', game_id).single()
@@ -96,6 +95,60 @@ export default async function handler(req, context) {
         await supabase.from('picks').update({ is_visible: false }).eq('game_id', game_id)
         const { data: game } = await supabase.from('games').select('*').eq('id', game_id).single()
         return Response.json({ message: 'Game reset to scheduled. Picks hidden again.', game })
+      }
+
+      case 'sync_game': {
+        const MLB_BASE = 'https://statsapi.mlb.com/api'
+        const DODGERS_ID = 119
+        const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date())
+
+        const mlbRes = await fetch(
+          `${MLB_BASE}/v1/schedule?teamId=${DODGERS_ID}&sportId=1&date=${today}&gameType=R&hydrate=team`
+        )
+        const mlbData = await mlbRes.json()
+        const dates = mlbData.dates || []
+        const synced = []
+
+        for (const d of dates) {
+          for (const g of (d.games || [])) {
+            const isHome = g.teams.home.team.id === DODGERS_ID
+            const isDodgersGame = isHome || g.teams.away.team.id === DODGERS_ID
+            if (!isDodgersGame) continue
+
+            const opponent = isHome
+              ? g.teams.away.team.abbreviation
+              : g.teams.home.team.abbreviation
+
+            const status =
+              g.status.abstractGameState === 'Final' ? 'final' :
+              g.status.abstractGameState === 'Live' ? 'active' :
+              g.status.detailedState?.toLowerCase().includes('postpone') ? 'postponed' :
+              'scheduled'
+
+            const row = {
+              game_pk: g.gamePk,
+              game_date: today,
+              opponent,
+              home_away: isHome ? 'home' : 'away',
+              status,
+              first_pitch_time: g.gameDate || null,
+              game_number: g.gameNumber || 1,
+              lineup_locked: false,
+            }
+
+            const { data: upserted, error: upsertErr } = await supabase
+              .from('games')
+              .upsert(row, { onConflict: 'game_pk' })
+              .select()
+              .single()
+
+            if (upsertErr) return Response.json({ error: `Supabase upsert failed: ${upsertErr.message}` }, { status: 500 })
+            synced.push(upserted)
+          }
+        }
+
+        if (!synced.length) return Response.json({ error: 'No Dodgers game found in MLB schedule for today.' }, { status: 404 })
+        return Response.json({ message: `Synced ${synced.length} game(s).`, games: synced })
       }
 
       default:

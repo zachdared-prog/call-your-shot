@@ -110,6 +110,27 @@ export default function Admin() {
     }
   }
 
+  async function syncTodaysGame() {
+    setMessage(null)
+    setLoading(true)
+    const res = await fetch('/.netlify/functions/admin-override', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-secret': ADMIN_SECRET,
+      },
+      body: JSON.stringify({ action: 'sync_game' }),
+    })
+    const data = await res.json()
+    if (res.ok) {
+      setMessage({ type: 'success', text: data.message || 'Synced.' })
+      await loadGames()
+    } else {
+      setMessage({ type: 'error', text: data.error || 'Sync failed.' })
+    }
+    setLoading(false)
+  }
+
   async function handleAddHR(e) {
     e.preventDefault()
     if (!hrPlayerId || !hrPlayerName || !hrInning) return
@@ -152,6 +173,12 @@ export default function Admin() {
       {message && (
         <div className={`admin-message admin-message--${message.type}`}>{message.text}</div>
       )}
+
+      <div className="admin-sync-row">
+        <button className="btn btn--primary" onClick={syncTodaysGame} disabled={loading}>
+          ⟳ Sync Today's Game from MLB
+        </button>
+      </div>
 
       <div className="admin-grid">
         <div className="admin-games-list">

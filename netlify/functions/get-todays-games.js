@@ -16,6 +16,7 @@ function getPacificDate() {
 
 export default async function handler(req, context) {
   const today = getPacificDate()
+  const debug = new URL(req.url).searchParams.get('debug') === '1'
 
   try {
     const res = await fetch(
@@ -25,6 +26,7 @@ export default async function handler(req, context) {
 
     const dates = data.dates || []
     const games = []
+    const errors = []
 
     for (const date of dates) {
       for (const game of (date.games || [])) {
@@ -58,17 +60,36 @@ export default async function handler(req, context) {
           .select()
           .single()
 
-        if (!error && upserted) games.push(upserted)
+        if (error) {
+          errors.push({ game_pk: game.gamePk, error: error.message, code: error.code })
+        } else if (upserted) {
+          games.push(upserted)
+        }
       }
     }
 
-    // If no games found from MLB API, check DB
+    if (debug && errors.length) {
+      return Response.json({ games, errors, env_check: {
+        has_url: !!process.env.VITE_SUPABASE_URL,
+        has_service_key: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+      }})
+    }
+
+    // If no games upserted, check DB
     if (games.length === 0) {
-      const { data: dbGames } = await supabase
+      const { data: dbGames, error: dbError } = await supabase
         .from('games')
         .select('*')
         .eq('game_date', today)
         .order('first_pitch_time')
+
+      if (debug) {
+        return Response.json({ games: dbGames || [], db_error: dbError?.message, errors, env_check: {
+          has_url: !!process.env.VITE_SUPABASE_URL,
+          has_service_key: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+        }})
+      }
+
       return Response.json({ games: dbGames || [] })
     }
 
