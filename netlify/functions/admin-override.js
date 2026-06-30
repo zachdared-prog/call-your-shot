@@ -7,6 +7,55 @@ const supabase = createClient(
   { realtime: { transport: ws } }
 )
 
+async function calculateScores(gameId) {
+  const [hrsResult, picksResult] = await Promise.all([
+    supabase.from('home_runs').select('*').eq('game_id', gameId).order('hr_number_in_game'),
+    supabase.from('picks').select('*').eq('game_id', gameId),
+  ])
+
+  const homeRuns = hrsResult.data || []
+  const picks = picksResult.data || []
+
+  if (!picks.length) return { picks: 0, hrs: homeRuns.length, scored: 0, note: 'no picks in this game' }
+
+  const firstHR = homeRuns.find(hr => hr.is_first_of_game)
+
+  const scoreRows = picks.map(pick => {
+    let points = 0
+    const breakdown = {}
+
+    if (firstHR && pick.player_id === firstHR.player_id) {
+      points += 5
+      breakdown.first_hr = 5
+    }
+
+    const additionalHRs = homeRuns.filter(
+      hr => !hr.is_first_of_game && hr.player_id === pick.player_id
+    )
+    if (additionalHRs.length > 0) {
+      points += additionalHRs.length
+      breakdown.additional_hrs = additionalHRs.length
+    }
+
+    return {
+      user_id: pick.user_id,
+      game_id: gameId,
+      points_earned: points,
+      breakdown,
+      calculated_at: new Date().toISOString(),
+    }
+  })
+
+  const { error } = await supabase
+    .from('scores')
+    .upsert(scoreRows, { onConflict: 'user_id,game_id' })
+
+  if (error) return { picks: picks.length, hrs: homeRuns.length, scored: 0, error: error.message }
+
+  const withPoints = scoreRows.filter(r => r.points_earned > 0).length
+  return { picks: picks.length, hrs: homeRuns.length, scored: scoreRows.length, withPoints }
+}
+
 export default async function handler(req, context) {
   if (req.method !== 'POST') {
     return Response.json({ error: 'POST only' }, { status: 405 })
@@ -44,10 +93,9 @@ export default async function handler(req, context) {
 
       case 'finalize_game': {
         await supabase.from('games').update({ status: 'final' }).eq('id', game_id)
-        const base = getBaseUrl(req)
-        await fetch(`${base}/calculate-scores?gameId=${game_id}`)
+        const result = await calculateScores(game_id)
         const { data: game } = await supabase.from('games').select('*').eq('id', game_id).single()
-        return Response.json({ message: 'Game marked final. Scores calculated.', game })
+        return Response.json({ message: `Game marked final. Scored ${result.scored} pick(s) (${result.withPoints ?? 0} with points).`, game })
       }
 
       case 'add_hr': {
@@ -75,22 +123,21 @@ export default async function handler(req, context) {
           detected_at: new Date().toISOString(),
         })
 
-        const base = getBaseUrl(req)
-        await fetch(`${base}/calculate-scores?gameId=${game_id}`)
-
-        return Response.json({ message: `HR #${nextNumber} added for ${player_name}.` })
+        const result = await calculateScores(game_id)
+        return Response.json({ message: `HR #${nextNumber} added for ${player_name}. Scored ${result.scored} pick(s).` })
       }
 
       case 'recalculate': {
-        const base = getBaseUrl(req)
-        await fetch(`${base}/calculate-scores?gameId=${game_id}`)
-        return Response.json({ message: 'Scores recalculated.' })
+        const result = await calculateScores(game_id)
+        if (result.error) {
+          return Response.json({ error: `Score calc failed: ${result.error}` }, { status: 500 })
+        }
+        return Response.json({
+          message: `Recalculated: ${result.picks} pick(s), ${result.hrs} HR(s), ${result.withPoints ?? 0} pick(s) scored points. ${result.note || ''}`.trim()
+        })
       }
 
       case 'pull_todays_hrs': {
-        // Picks are in game_id (old record). HRs landed in a newer duplicate record.
-        // Find all other games with the same opponent that have HRs, move them here,
-        // then update this game's game_pk so the poller tracks it going forward.
         const { data: targetGame } = await supabase.from('games').select('*').eq('id', game_id).single()
         if (!targetGame) return Response.json({ error: 'Game not found' }, { status: 404 })
 
@@ -110,21 +157,20 @@ export default async function handler(req, context) {
           await supabase.from('home_runs').update({ game_id }).eq('game_id', other.id)
           hrsMoved += hrs.length
           if (other.game_date >= targetGame.game_date) newGamePk = other.game_pk
-          // Hide the now-empty duplicate
           await supabase.from('games').update({ status: 'postponed' }).eq('id', other.id)
         }
 
-        // Mark target active, update game_pk so scheduled poller tracks it, reveal picks
         await supabase.from('games').update({
           game_pk: newGamePk, status: 'active', lineup_locked: true,
         }).eq('id', game_id)
         await supabase.from('picks').update({ is_visible: true }).eq('game_id', game_id)
 
-        const base = getBaseUrl(req)
-        await fetch(`${base}/calculate-scores?gameId=${game_id}`)
-
+        const result = await calculateScores(game_id)
         const { data: game } = await supabase.from('games').select('*').eq('id', game_id).single()
-        return Response.json({ message: `Moved ${hrsMoved} HR(s) into this game. Scores recalculated.`, game })
+        return Response.json({
+          message: `Moved ${hrsMoved} HR(s) into this game. Scored ${result.scored} pick(s) (${result.withPoints ?? 0} with points).`,
+          game
+        })
       }
 
       case 'move_picks_here': {
@@ -132,17 +178,37 @@ export default async function handler(req, context) {
         const { data: otherGames } = await supabase
           .from('games').select('id').neq('id', game_id).gte('game_date', since)
         const otherIds = (otherGames || []).map(g => g.id)
+
         if (!otherIds.length) return Response.json({ message: 'No other recent games found.' })
+
         const { data: picksToMove } = await supabase
-          .from('picks').select('id').in('game_id', otherIds)
+          .from('picks').select('id, user_id').in('game_id', otherIds)
+
         if (!picksToMove?.length) return Response.json({ message: 'No picks found in other games.' })
-        await supabase.from('picks').update({ game_id, is_visible: true }).in('game_id', otherIds)
+
+        // Delete any conflicting picks already in target game to avoid unique (user_id, game_id) violations
+        const movingUserIds = picksToMove.map(p => p.user_id)
+        await supabase.from('picks')
+          .delete()
+          .eq('game_id', game_id)
+          .in('user_id', movingUserIds)
+
+        const { error: updateErr } = await supabase
+          .from('picks').update({ game_id, is_visible: true }).in('game_id', otherIds)
+
+        if (updateErr) {
+          return Response.json({ error: `Failed to move picks: ${updateErr.message}` }, { status: 500 })
+        }
+
         await supabase.from('games')
           .update({ status: 'active', lineup_locked: true }).eq('id', game_id)
-        const base = getBaseUrl(req)
-        await fetch(`${base}/calculate-scores?gameId=${game_id}`)
+
+        const result = await calculateScores(game_id)
         const { data: game } = await supabase.from('games').select('*').eq('id', game_id).single()
-        return Response.json({ message: `Moved ${picksToMove.length} pick(s) here. Scores recalculated.`, game })
+        return Response.json({
+          message: `Moved ${picksToMove.length} pick(s) here. Scored ${result.scored} pick(s), ${result.withPoints ?? 0} with points. ${result.note || ''}`.trim(),
+          game
+        })
       }
 
       case 'reset_game': {
@@ -215,9 +281,4 @@ export default async function handler(req, context) {
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 })
   }
-}
-
-function getBaseUrl(req) {
-  const url = new URL(req.url)
-  return `${url.protocol}//${url.host}/.netlify/functions`
 }
