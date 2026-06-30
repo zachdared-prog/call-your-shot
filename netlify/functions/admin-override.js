@@ -127,6 +127,24 @@ export default async function handler(req, context) {
         return Response.json({ message: `Moved ${hrsMoved} HR(s) into this game. Scores recalculated.`, game })
       }
 
+      case 'move_picks_here': {
+        const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+        const { data: otherGames } = await supabase
+          .from('games').select('id').neq('id', game_id).gte('game_date', since)
+        const otherIds = (otherGames || []).map(g => g.id)
+        if (!otherIds.length) return Response.json({ message: 'No other recent games found.' })
+        const { data: picksToMove } = await supabase
+          .from('picks').select('id').in('game_id', otherIds)
+        if (!picksToMove?.length) return Response.json({ message: 'No picks found in other games.' })
+        await supabase.from('picks').update({ game_id, is_visible: true }).in('game_id', otherIds)
+        await supabase.from('games')
+          .update({ status: 'active', lineup_locked: true }).eq('id', game_id)
+        const base = getBaseUrl(req)
+        await fetch(`${base}/calculate-scores?gameId=${game_id}`)
+        const { data: game } = await supabase.from('games').select('*').eq('id', game_id).single()
+        return Response.json({ message: `Moved ${picksToMove.length} pick(s) here. Scores recalculated.`, game })
+      }
+
       case 'reset_game': {
         await supabase
           .from('games')

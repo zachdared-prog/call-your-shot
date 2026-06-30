@@ -249,6 +249,9 @@ export default function Admin() {
                 <button className="btn btn--outline" onClick={() => callOverride('reset_game')}>
                   ⏪ Reset to Scheduled
                 </button>
+                <button className="btn btn--primary" onClick={() => callOverride('move_picks_here')}>
+                  ↙ Move All Picks Here
+                </button>
               </div>
             </div>
 
