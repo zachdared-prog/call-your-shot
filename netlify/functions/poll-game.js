@@ -38,18 +38,13 @@ export default async function handler(req, context) {
 
     if (!gameRow) return Response.json({ error: 'Game not in DB' }, { status: 404 })
 
-    // Update game status
     if (gameRow.status !== newStatus) {
-      const updates = { status: newStatus }
-      if (newStatus === 'active') {
-        // Reveal all picks
-        await supabase
-          .from('picks')
-          .update({ is_visible: true })
-          .eq('game_id', gameRow.id)
-        updates.lineup_locked = true
-      }
-      await supabase.from('games').update(updates).eq('id', gameRow.id)
+      await supabase.from('games').update({ status: newStatus }).eq('id', gameRow.id)
+    }
+
+    if (newStatus === 'active' && !gameRow.lineup_locked) {
+      await supabase.from('games').update({ lineup_locked: true }).eq('id', gameRow.id)
+      await supabase.from('picks').update({ is_visible: true }).eq('game_id', gameRow.id)
     }
 
     // Parse play-by-play for home runs
