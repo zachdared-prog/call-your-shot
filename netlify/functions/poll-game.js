@@ -10,11 +10,36 @@ const supabase = createClient(
 const MLB_BASE = 'https://statsapi.mlb.com/api'
 const DODGERS_ID = 119
 
+function getPacificDate() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date())
+}
+
+async function findTodaysGamePk() {
+  const today = getPacificDate()
+  const res = await fetch(
+    `${MLB_BASE}/v1/schedule?teamId=${DODGERS_ID}&sportId=1&date=${today}&gameType=R&hydrate=team`
+  )
+  const data = await res.json()
+  for (const date of (data.dates || [])) {
+    for (const game of (date.games || [])) {
+      const hasDodgers = game.teams.home.team.id === DODGERS_ID || game.teams.away.team.id === DODGERS_ID
+      if (hasDodgers) return { gamePk: game.gamePk, gameDate: today }
+    }
+  }
+  return null
+}
+
 export default async function handler(req, context) {
   const url = new URL(req.url)
-  const gamePk = url.searchParams.get('gamePk')
+  let gamePk = url.searchParams.get('gamePk')
+  let gameDate = null
 
-  if (!gamePk) return Response.json({ error: 'gamePk required' }, { status: 400 })
+  if (!gamePk) {
+    const found = await findTodaysGamePk()
+    if (!found) return Response.json({ error: 'No Dodgers game found today' }, { status: 404 })
+    gamePk = found.gamePk
+    gameDate = found.gameDate
+  }
 
   try {
     const res = await fetch(`${MLB_BASE}/v1.1/game/${gamePk}/feed/live`)
@@ -29,14 +54,36 @@ export default async function handler(req, context) {
     else if (abstract === 'Final') newStatus = 'final'
     else if (detailed.toLowerCase().includes('postpone')) newStatus = 'postponed'
 
-    // Get game record from DB
-    const { data: gameRow } = await supabase
+    // Get or create game record in DB
+    let { data: gameRow } = await supabase
       .from('games')
       .select('*')
       .eq('game_pk', parseInt(gamePk))
-      .single()
+      .maybeSingle()
 
-    if (!gameRow) return Response.json({ error: 'Game not in DB' }, { status: 404 })
+    if (!gameRow) {
+      const gd = feed?.gameData
+      const isHome = gd?.teams?.home?.id === DODGERS_ID
+      const opponent = isHome
+        ? gd?.teams?.away?.abbreviation
+        : gd?.teams?.home?.abbreviation
+      const today = gameDate || getPacificDate()
+      const { data: inserted } = await supabase
+        .from('games')
+        .insert({
+          game_pk: parseInt(gamePk),
+          game_date: today,
+          opponent: opponent || 'UNK',
+          home_away: isHome ? 'home' : 'away',
+          status: newStatus,
+          first_pitch_time: gd?.datetime?.dateTime || null,
+          game_number: feed?.gameData?.game?.gameNumber || 1,
+        })
+        .select()
+        .single()
+      if (!inserted) return Response.json({ error: 'Could not create game record' }, { status: 500 })
+      gameRow = inserted
+    }
 
     if (gameRow.status !== newStatus) {
       await supabase.from('games').update({ status: newStatus }).eq('id', gameRow.id)

@@ -76,16 +76,15 @@ export default function Admin() {
   }
 
   async function syncFromMLB() {
-    if (!selectedGame) return
     setMessage(null)
     try {
-      const res = await fetch(`/.netlify/functions/poll-game?gamePk=${selectedGame.game_pk}`)
+      // No gamePk — function finds today's Dodgers game automatically
+      const res = await fetch('/.netlify/functions/poll-game')
       const text = await res.text()
       let data = {}
       try { data = JSON.parse(text) } catch (_) {}
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
       setMessage({ type: 'success', text: `Synced — status: ${data.status}, new HRs: ${data.newHRs ?? 0}` })
-      await selectGame(selectedGame)
       await loadGames()
     } catch (e) {
       setMessage({ type: 'error', text: 'Sync error: ' + e.message })
@@ -192,8 +191,8 @@ export default function Admin() {
       )}
 
       <div className="admin-sync-row">
-        <button className="btn btn--primary" onClick={syncTodaysGame} disabled={loading}>
-          ⟳ Sync Today's Game from MLB
+        <button className="btn btn--primary" onClick={syncFromMLB} disabled={loading}>
+          ⚡ Sync Today's HRs from MLB
         </button>
       </div>
 
@@ -232,9 +231,6 @@ export default function Admin() {
             <div className="admin-actions">
               <h3>Game Controls</h3>
               <div className="admin-btn-row">
-                <button className="btn btn--primary" onClick={syncFromMLB}>
-                  ⚡ Sync from MLB API
-                </button>
                 <button className="btn btn--live" onClick={() => callOverride('start_game')}>
                   ▶ Mark as Started
                 </button>
