@@ -231,6 +231,9 @@ export default function Admin() {
             <div className="admin-actions">
               <h3>Game Controls</h3>
               <div className="admin-btn-row">
+                <button className="btn btn--primary" onClick={() => callOverride('pull_todays_hrs')}>
+                  ⚡ Pull Today's HRs Here
+                </button>
                 <button className="btn btn--live" onClick={() => callOverride('start_game')}>
                   ▶ Mark as Started
                 </button>

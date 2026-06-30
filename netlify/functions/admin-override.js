@@ -87,6 +87,46 @@ export default async function handler(req, context) {
         return Response.json({ message: 'Scores recalculated.' })
       }
 
+      case 'pull_todays_hrs': {
+        // Picks are in game_id (old record). HRs landed in a newer duplicate record.
+        // Find all other games with the same opponent that have HRs, move them here,
+        // then update this game's game_pk so the poller tracks it going forward.
+        const { data: targetGame } = await supabase.from('games').select('*').eq('id', game_id).single()
+        if (!targetGame) return Response.json({ error: 'Game not found' }, { status: 404 })
+
+        const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+        const { data: others } = await supabase
+          .from('games').select('id, game_pk, game_date, status')
+          .eq('opponent', targetGame.opponent)
+          .neq('id', game_id)
+          .gte('game_date', since)
+
+        let hrsMoved = 0
+        let newGamePk = targetGame.game_pk
+
+        for (const other of (others || [])) {
+          const { data: hrs } = await supabase.from('home_runs').select('id').eq('game_id', other.id)
+          if (!hrs?.length) continue
+          await supabase.from('home_runs').update({ game_id }).eq('game_id', other.id)
+          hrsMoved += hrs.length
+          if (other.game_date >= targetGame.game_date) newGamePk = other.game_pk
+          // Hide the now-empty duplicate
+          await supabase.from('games').update({ status: 'postponed' }).eq('id', other.id)
+        }
+
+        // Mark target active, update game_pk so scheduled poller tracks it, reveal picks
+        await supabase.from('games').update({
+          game_pk: newGamePk, status: 'active', lineup_locked: true,
+        }).eq('id', game_id)
+        await supabase.from('picks').update({ is_visible: true }).eq('game_id', game_id)
+
+        const base = getBaseUrl(req)
+        await fetch(`${base}/calculate-scores?gameId=${game_id}`)
+
+        const { data: game } = await supabase.from('games').select('*').eq('id', game_id).single()
+        return Response.json({ message: `Moved ${hrsMoved} HR(s) into this game. Scores recalculated.`, game })
+      }
+
       case 'reset_game': {
         await supabase
           .from('games')
